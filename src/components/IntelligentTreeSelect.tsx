@@ -5,9 +5,91 @@ import {VirtualizedTreeSelect} from "./VirtualizedTreeSelect";
 import PropTypes from "prop-types";
 import {isURL, monotonicAssign, sanitizeArray} from "./utils/Utils";
 import Constants from "./utils/Constants";
+import type {
+  BaseOption,
+  CachedOptions,
+  IntelligentTreeSelectProps,
+  OnChangeValue,
+  OptionKey,
+  OptionLifetime,
+  ProcessedOption,
+  ScrollMetrics,
+  VirtualizedTreeSelectProps,
+} from "../types";
 
-class IntelligentTreeSelect extends Component {
-  constructor(props, context) {
+type IntelligentDefaultProp =
+  | "autoFocus"
+  | "childrenKey"
+  | "expanded"
+  | "fetchLimit"
+  | "hideSelectedOptions"
+  | "isClearable"
+  | "isMenuOpen"
+  | "labelKey"
+  | "menuIsFloating"
+  | "multi"
+  | "optionHeight"
+  | "optionLifetime"
+  | "options"
+  | "renderAsTree"
+  | "searchDelay"
+  | "simpleTreeData"
+  | "styles"
+  | "titleKey"
+  | "valueIsControlled"
+  | "valueKey";
+
+type ResolvedIntelligentTreeSelectProps<
+  T extends BaseOption,
+  IsMulti extends boolean,
+  IsClearable extends boolean
+> = IntelligentTreeSelectProps<T, IsMulti, IsClearable> &
+  Required<Pick<IntelligentTreeSelectProps<T, IsMulti, IsClearable>, IntelligentDefaultProp>>;
+
+interface IntelligentTreeSelectState<T extends BaseOption, IsMulti extends boolean = boolean> {
+  expanded: boolean;
+  multi: IsMulti;
+  options: ProcessedOption<T>[];
+  selectedOptions: ProcessedOption<T>[];
+  passedValue: Array<T | OptionKey>;
+  isLoadingExternally: boolean;
+  update: number;
+}
+
+interface ValueComponentProps<T extends BaseOption> {
+  children: React.ReactNode;
+  data: ProcessedOption<T>;
+}
+
+interface DebouncedSearch {
+  (searchString: string, offset: number): void;
+  cancel(): void;
+  flush(): void;
+}
+
+class IntelligentTreeSelect<
+  T extends BaseOption = BaseOption,
+  IsMulti extends boolean = true,
+  IsClearable extends boolean = true
+> extends Component<IntelligentTreeSelectProps<T, IsMulti, IsClearable>, IntelligentTreeSelectState<T, IsMulti>> {
+  declare static defaultProps: Pick<
+    ResolvedIntelligentTreeSelectProps<BaseOption, boolean, boolean>,
+    IntelligentDefaultProp
+  >;
+  declare static propTypes: Partial<Record<keyof IntelligentTreeSelectProps<BaseOption, boolean, boolean>, unknown>>;
+
+  declare readonly props: Readonly<ResolvedIntelligentTreeSelectProps<T, IsMulti, IsClearable>>;
+
+  declare fetching: false | Promise<void>;
+  declare completedNodes: Record<string, boolean>;
+  declare toggledNodes: Record<string, boolean>;
+  declare searchString: string;
+  declare searchPage: number;
+  declare totalRequestedRootOptions: number;
+  declare select: React.RefObject<VirtualizedTreeSelect<T, IsMulti, IsClearable>>;
+  declare debouncedSearch: DebouncedSearch;
+
+  constructor(props: IntelligentTreeSelectProps<T, IsMulti, IsClearable>, context?: unknown) {
     super(props, context);
 
     this.fetching = false;
@@ -30,7 +112,7 @@ class IntelligentTreeSelect extends Component {
       multi: this.props.multi,
       options: [],
       selectedOptions: [],
-      passedValue: this.props.value || [],
+      passedValue: (this.props.value || []) as Array<T | OptionKey>,
       isLoadingExternally: false,
       update: 0,
     };
@@ -42,13 +124,13 @@ class IntelligentTreeSelect extends Component {
   }
 
   componentDidMount() {
-    let data = [];
+    let data: ProcessedOption<T>[] = [];
     if (this.props.name && this.props.fetchOptions) {
-      data = this._retrieveCachedData();
+      data = this._retrieveCachedData()!;
     }
 
     if (data.length === 0) {
-      data = this.props.options;
+      data = this.props.options as ProcessedOption<T>[];
     }
 
     if (!this.props.simpleTreeData) {
@@ -59,10 +141,10 @@ class IntelligentTreeSelect extends Component {
     this._loadOptions();
   }
 
-  _retrieveCachedData() {
-    let cachedData = window.localStorage.getItem(this.props.name);
+  _retrieveCachedData(): ProcessedOption<T>[] | undefined {
+    let cachedData: string | CachedOptions<ProcessedOption<T>> | null = window.localStorage.getItem(this.props.name!);
     if (cachedData) {
-      cachedData = JSON.parse(cachedData);
+      cachedData = JSON.parse(cachedData) as CachedOptions<ProcessedOption<T>>;
       return cachedData.validTo > Date.now() ? cachedData.data : [];
     }
   }
@@ -75,7 +157,13 @@ class IntelligentTreeSelect extends Component {
     }
   }
 
-  _fetchOptions(searchString, optionId, offset, topOption, callback) {
+  _fetchOptions(
+    searchString: string,
+    optionId: OptionKey,
+    offset: number,
+    topOption?: ProcessedOption<T>,
+    callback?: (options: ProcessedOption<T>[]) => void
+  ): void {
     this.setState({isLoadingExternally: true});
     this.fetching = this._getResponse(searchString, optionId, this.props.fetchLimit, offset, topOption).then(
       (response) => {
@@ -99,7 +187,10 @@ class IntelligentTreeSelect extends Component {
   }
 
   // If the values are controlled from the outside, it is needed to map them properly to options which Select knows
-  static getDerivedStateFromProps(props, state) {
+  static getDerivedStateFromProps<TOption extends BaseOption>(
+    props: ResolvedIntelligentTreeSelectProps<TOption, boolean, boolean>,
+    state: IntelligentTreeSelectState<TOption, boolean>
+  ): Partial<IntelligentTreeSelectState<TOption, boolean>> | null {
     if (!props.valueIsControlled) {
       return null;
     }
@@ -111,13 +202,13 @@ class IntelligentTreeSelect extends Component {
       };
     }
 
-    const values = sanitizeArray(props.value);
-    const existingOptions = sanitizeArray(state.options);
-    const modifiedPassedValue = [];
-    const modifiedSelectedOptions = [];
+    const values = sanitizeArray<TOption | OptionKey>(props.value as TOption | OptionKey | Array<TOption | OptionKey>);
+    const existingOptions = sanitizeArray<ProcessedOption<TOption>>(state.options);
+    const modifiedPassedValue: Array<TOption | OptionKey> = [];
+    const modifiedSelectedOptions: ProcessedOption<TOption>[] = [];
 
     for (const valueElement of values) {
-      const key = valueElement[props.valueKey] ?? valueElement;
+      const key = (valueElement as TOption)[props.valueKey] ?? valueElement;
       const opt =
         existingOptions.find((term) => term[props.valueKey] === key) ||
         (typeof valueElement === "object" && valueElement[props.valueKey] ? valueElement : null);
@@ -175,11 +266,11 @@ class IntelligentTreeSelect extends Component {
   /**
    * Gets the current options provided by this component.
    */
-  getOptions() {
+  getOptions(): T[] {
     return this.state.options.slice();
   }
 
-  componentDidUpdate(prevProps) {
+  componentDidUpdate(prevProps: IntelligentTreeSelectProps<T, IsMulti, IsClearable>): void {
     if (!this.props.fetchOptions && prevProps.options !== this.props.options) {
       this.setState({options: []}, () => {
         // Reset options from props
@@ -188,35 +279,35 @@ class IntelligentTreeSelect extends Component {
     }
   }
 
-  _simplifyData(responseData) {
-    let result = [];
+  _simplifyData(responseData: T[]): ProcessedOption<T>[] {
+    let result: ProcessedOption<T>[] = [];
     const {valueKey, childrenKey} = this.props;
 
     if (!responseData || responseData.length === 0) return result;
 
     for (let i = 0; i < responseData.length; i++) {
       //deep clone
-      let data = JSON.parse(JSON.stringify(responseData[i]));
+      let data = JSON.parse(JSON.stringify(responseData[i])) as ProcessedOption<T>;
       result = result.concat(data);
-      const childrenArr = sanitizeArray(data[childrenKey]);
+      const childrenArr = sanitizeArray<T>(data[childrenKey]);
       if (childrenArr.length > 0) {
         result = result.concat(this._simplifyData(childrenArr));
-        data[childrenKey] = childrenArr.map((xdata) => xdata[valueKey]);
+        (data as BaseOption)[childrenKey] = childrenArr.map((xdata) => xdata[valueKey]);
       }
     }
 
     return result;
   }
 
-  _parseOptionLifetime(value) {
-    let optionLifetime = {
+  _parseOptionLifetime(value: string): OptionLifetime {
+    let optionLifetime: OptionLifetime = {
       days: 0,
       hours: 0,
       minutes: 30,
       seconds: 0,
     };
     if (/^(\d+d)?(\d+h)?(\d+m)?(\d+s)?$/.test(value)) {
-      let tmp = /^(\d+d)?(\d+h)?(\d+m)?(\d+s)?$/.exec(value);
+      let tmp = /^(\d+d)?(\d+h)?(\d+m)?(\d+s)?$/.exec(value)!;
       optionLifetime = {
         days: parseInt(tmp[1], 10),
         hours: parseInt(tmp[2], 10),
@@ -229,8 +320,8 @@ class IntelligentTreeSelect extends Component {
     return optionLifetime;
   }
 
-  _getValidForInSec(optionLifetime) {
-    optionLifetime = this._parseOptionLifetime(optionLifetime);
+  _getValidForInSec(optionLifetime: string | OptionLifetime): number {
+    optionLifetime = this._parseOptionLifetime(optionLifetime as string);
     let res = 0;
     res += isNaN(optionLifetime.seconds) ? 0 : optionLifetime.seconds;
     res += isNaN(optionLifetime.minutes) ? 0 : optionLifetime.minutes * 60;
@@ -239,7 +330,7 @@ class IntelligentTreeSelect extends Component {
     return res * 1000;
   }
 
-  _getRootNodesCount() {
+  _getRootNodesCount(): number {
     let count = 0;
     this.state.options.forEach((option) => {
       if (option.depth === 0) count++;
@@ -247,7 +338,13 @@ class IntelligentTreeSelect extends Component {
     return count;
   }
 
-  async _getResponse(searchString, optionID, limit, offset, option) {
+  async _getResponse(
+    searchString: string,
+    optionID: OptionKey,
+    limit: number,
+    offset: number,
+    option?: ProcessedOption<T>
+  ): Promise<T[]> {
     return this.props.fetchOptions
       ? await this.props.fetchOptions({
           searchString,
@@ -259,7 +356,7 @@ class IntelligentTreeSelect extends Component {
       : [];
   }
 
-  _onInputChange(searchString) {
+  _onInputChange(searchString: string): void {
     if (this.props.fetchOptions) {
       if (searchString) {
         if (!this.fetching) {
@@ -301,7 +398,7 @@ class IntelligentTreeSelect extends Component {
     }
   }
 
-  _invokeSearch(searchString, offset) {
+  _invokeSearch(searchString: string, offset: number): void {
     const isSearch = !!searchString;
     const computedOffset = isSearch ? this.searchPage * this.props.fetchLimit : offset;
     this._fetchOptions(searchString, "", computedOffset, undefined, (data) => {
@@ -319,7 +416,7 @@ class IntelligentTreeSelect extends Component {
     });
   }
 
-  _onScroll(data) {
+  _onScroll(data: ScrollMetrics): void {
     const {clientHeight, scrollHeight, scrollTop} = data;
 
     if (!this.state.options.length) return;
@@ -365,7 +462,7 @@ class IntelligentTreeSelect extends Component {
     }
   }
 
-  _onOptionToggle(option) {
+  _onOptionToggle(option?: ProcessedOption<T>): void {
     if (!option) {
       return;
     }
@@ -404,7 +501,7 @@ class IntelligentTreeSelect extends Component {
     this.forceUpdate();
   }
 
-  _valueRenderer({children, data}) {
+  _valueRenderer({children, data}: ValueComponentProps<T>): React.ReactNode {
     if (this.props.valueRenderer) {
       // On initial render, there can be empty options
       if (!children) return null;
@@ -422,13 +519,13 @@ class IntelligentTreeSelect extends Component {
     return children;
   }
 
-  _addNewOptions(newOptions) {
+  _addNewOptions(newOptions: Array<T | ProcessedOption<T>>): void {
     const {childrenKey, fetchOptions, name, optionLifetime} = this.props;
 
-    let mergedArr;
+    let mergedArr: ProcessedOption<T>[];
     if (this.state.options.length === 0) {
-      newOptions.forEach((no) => (no[childrenKey] = sanitizeArray(no[childrenKey])));
-      mergedArr = newOptions;
+      newOptions.forEach((no) => ((no as BaseOption)[childrenKey] = sanitizeArray(no[childrenKey])));
+      mergedArr = newOptions as ProcessedOption<T>[];
     } else {
       mergedArr = this._mergeOptionArrays(this.state.options, newOptions);
     }
@@ -447,44 +544,47 @@ class IntelligentTreeSelect extends Component {
       this._finalizeSelectedOptions(newOptions, mergedArr);
     }
 
-    this.setState({options: mergedArr, update: ++this.state.update});
+    this.setState({options: mergedArr, update: ++(this.state as IntelligentTreeSelectState<T, IsMulti>).update});
   }
 
-  _mergeOptionArrays(originalOptions, newOptions) {
+  _mergeOptionArrays(
+    originalOptions: ProcessedOption<T>[],
+    newOptions: Array<T | ProcessedOption<T>>
+  ): ProcessedOption<T>[] {
     const {valueKey, childrenKey} = this.props;
     let options = originalOptions.concat(newOptions);
-    let mergedArr = [];
+    let mergedArr: ProcessedOption<T>[] = [];
 
     //merge options
     while (options.length > 0) {
-      let currOption = options.shift();
+      let currOption = options.shift()!;
 
-      currOption[childrenKey] = sanitizeArray(currOption[childrenKey]);
+      (currOption as BaseOption)[childrenKey] = sanitizeArray(currOption[childrenKey]);
 
-      const conflicts = [];
-      const optionsToReplace = [];
+      const conflicts: ProcessedOption<T>[] = [];
+      const optionsToReplace: ProcessedOption<T>[] = [];
       options.forEach((object) => {
         if (object[valueKey] === currOption[valueKey]) {
-          object[childrenKey] = sanitizeArray(object[childrenKey]);
+          (object as BaseOption)[childrenKey] = sanitizeArray(object[childrenKey]);
           conflicts.push(object);
         } else {
           optionsToReplace.push(object);
         }
       });
-      mergedArr.push(monotonicAssign({}, currOption, ...conflicts.reverse()));
+      mergedArr.push(monotonicAssign({} as ProcessedOption<T>, currOption, ...conflicts.reverse()));
       options = optionsToReplace;
     }
     return mergedArr;
   }
 
   //Check if new options contain selected value
-  _finalizeSelectedOptions(addedOptions, parsedOptions) {
-    const foundOptions = [];
-    let previouslySelected = sanitizeArray(this.state.passedValue);
-    let newSelected = sanitizeArray(this.state.selectedOptions);
+  _finalizeSelectedOptions(addedOptions: Array<T | ProcessedOption<T>>, parsedOptions: ProcessedOption<T>[]): void {
+    const foundOptions: OptionKey[] = [];
+    let previouslySelected = sanitizeArray<T | OptionKey>(this.state.passedValue);
+    let newSelected = sanitizeArray<ProcessedOption<T>>(this.state.selectedOptions);
 
     for (const selectedOpt of previouslySelected) {
-      const key = selectedOpt[this.props.valueKey] ?? selectedOpt;
+      const key = (selectedOpt as T)[this.props.valueKey] ?? selectedOpt;
       const option = addedOptions.find((term) => term[this.props.valueKey] === key);
       if (!option) continue;
       foundOptions.push(key);
@@ -492,7 +592,7 @@ class IntelligentTreeSelect extends Component {
 
       // prevent duplicates
       if (!newSelected.some((term) => term[this.props.valueKey] === key)) {
-        newSelected = this.props.multi ? [...newSelected, optionParsed] : [optionParsed];
+        newSelected = this.props.multi ? [...newSelected, optionParsed!] : [optionParsed!];
       }
     }
     this._addSelectedOption(newSelected);
@@ -507,41 +607,55 @@ class IntelligentTreeSelect extends Component {
     this.setState({passedValue: previouslySelected});
   }
 
-  _onChange(options) {
-    let optionsArray = sanitizeArray(options);
+  _onChange(options: ProcessedOption<T> | readonly ProcessedOption<T>[] | null): void {
+    let optionsArray = sanitizeArray<ProcessedOption<T>>(options);
     if (!this.props.valueIsControlled) {
       // updating internal state synchronously only when value is not controlled
       this._addSelectedOption(optionsArray);
     }
     if (this.props.onChange) {
-      this.props.onChange(options);
+      this.props.onChange(options as OnChangeValue<T, IsMulti, IsClearable>);
     }
   }
 
-  _addSelectedOption(selectedOptions) {
+  _addSelectedOption(selectedOptions: ProcessedOption<T>[]): void {
     this.setState({selectedOptions});
   }
 
   render() {
-    let listProps = {};
+    let listProps: {
+      onScroll: (metrics: ScrollMetrics) => void;
+      ref: React.RefObject<VirtualizedTreeSelect<T, IsMulti, IsClearable>>;
+    } = {} as {
+      onScroll: (metrics: ScrollMetrics) => void;
+      ref: React.RefObject<VirtualizedTreeSelect<T, IsMulti, IsClearable>>;
+    };
     listProps.onScroll = this.props.onScroll || this._onScroll;
     listProps.ref = this.select;
     const valueRenderer = this._valueRenderer;
-    const propsToPass = Object.assign({}, this.props);
+    const propsToPass: Record<string, unknown> = Object.assign({}, this.props);
     delete propsToPass.valueRenderer;
     delete propsToPass.onScroll;
     delete propsToPass.value;
     delete propsToPass.onChange;
 
+    const VirtualizedComponent = VirtualizedTreeSelect as unknown as React.ComponentType<
+      VirtualizedTreeSelectProps<T, IsMulti, IsClearable> &
+        React.RefAttributes<VirtualizedTreeSelect<T, IsMulti, IsClearable>> & {
+          isLoading?: boolean;
+          menuIsOpen?: boolean;
+        }
+    >;
+
     return (
       <div>
-        <VirtualizedTreeSelect
+        <VirtualizedComponent
           ref={this.select}
           styles={this.props.styles}
           name="react-virtualized-tree-select"
           onChange={this._onChange}
           value={this.state.selectedOptions}
-          valueRenderer={valueRenderer}
+          valueRenderer={valueRenderer as React.ComponentType<any>}
           {...propsToPass}
           menuIsOpen={this.props.isMenuOpen}
           expanded={this.state.expanded}

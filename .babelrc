@@ -9,7 +9,8 @@
         "modules": false
       }
     ],
-    "@babel/preset-react"
+    "@babel/preset-react",
+    ["@babel/preset-typescript", {"allowDeclareFields": true}]
   ],
   "plugins": ["@babel/plugin-proposal-object-rest-spread"],
   "env": {
@@ -36,6 +37,20 @@
               "node": "current"
             },
             "modules": false
+          }
+        ],
+        "@babel/preset-react"
+      ]
+    },
+    "test": {
+      "presets": [
+        [
+          "@babel/preset-env",
+          {
+            "targets": {
+              "node": "current"
+            },
+            "modules": "commonjs"
           }
         ],
         "@babel/preset-react"

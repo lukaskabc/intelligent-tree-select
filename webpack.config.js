@@ -3,7 +3,7 @@ const HtmlWebpackPlugin = require("html-webpack-plugin");
 
 module.exports = {
   mode: "development",
-  entry: path.join(__dirname, "examples/demo.js"),
+  entry: path.join(__dirname, "examples/demo.tsx"),
   output: {
     path: path.join(__dirname, "examples/build"),
     filename: "demo.js",
@@ -12,7 +12,7 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(js|jsx)$/,
+        test: /\.(js|jsx|ts|tsx)$/,
         use: "babel-loader",
         exclude: /node_modules/,
       },
@@ -38,7 +38,7 @@ module.exports = {
     }),
   ],
   resolve: {
-    extensions: [".js", ".jsx"],
+    extensions: [".ts", ".tsx", ".js", ".jsx"],
   },
   devServer: {
     static: path.join(__dirname, "examples/build"),

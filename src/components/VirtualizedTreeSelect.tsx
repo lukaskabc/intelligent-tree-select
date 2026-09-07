@@ -1,25 +1,122 @@
 import React, {Component} from "react";
 import Select, {components} from "react-select";
+import type {FilterOptionOption, GroupBase, MenuListProps, MenuProps, SelectInstance, StylesConfig} from "react-select";
 import PropTypes from "prop-types";
 import Option from "./Option";
 import Constants from "./utils/Constants";
 import {FixedSizeList as List} from "react-window";
 import {arraysAreEqual, getLabel, optionListsAreEqual, sanitizeArray} from "./utils/Utils";
+import type {
+  BaseOption,
+  FocusedOptionScrollState,
+  OptionKey,
+  ProcessedOption,
+  VirtualizedListProps,
+  VirtualizedTreeSelectProps,
+} from "../types";
+import type {FixedSizeList as FixedSizeListInstance, FixedSizeListProps, ListChildComponentProps} from "react-window";
+
+type VirtualizedDefaultProp =
+  | "childrenKey"
+  | "expanded"
+  | "hideSelectedOptions"
+  | "isMenuOpen"
+  | "labelKey"
+  | "maxHeight"
+  | "menuIsFloating"
+  | "minHeight"
+  | "multi"
+  | "optionHeight"
+  | "optionLeftOffset"
+  | "options"
+  | "renderAsTree"
+  | "styles"
+  | "valueKey";
+
+type ResolvedVirtualizedTreeSelectProps<
+  T extends BaseOption,
+  IsMulti extends boolean,
+  IsClearable extends boolean
+> = VirtualizedTreeSelectProps<T, IsMulti, IsClearable> &
+  Required<Pick<VirtualizedTreeSelectProps<T, IsMulti, IsClearable>, VirtualizedDefaultProp>>;
+
+interface VirtualizedTreeSelectState<T extends BaseOption> {
+  options: ProcessedOption<T>[];
+  initialExpansion: boolean;
+}
+
+interface SelectOptionProps<T extends BaseOption> {
+  data: ProcessedOption<T>;
+  selectOption: (option: ProcessedOption<T>) => void;
+}
+
+interface InjectedRuntimeSelectProps<T extends BaseOption> {
+  childrenKey: string;
+  focusedOptionScrollState: FocusedOptionScrollState;
+  focus: () => void;
+  listProps?: VirtualizedListProps;
+  maxHeight: number;
+  menuIsFloating: boolean;
+  multi: boolean;
+  onOptionHover: (option: ProcessedOption<T>) => void;
+  onOptionSelect: (props: SelectOptionProps<T>) => void;
+  onOptionToggle: (option: ProcessedOption<T>) => void;
+  optionHeight: number | ((context: {option: T}) => number);
+  renderAsTree: boolean;
+  titleKey?: string;
+  valueKey: string;
+}
+
+type TreeAwareSelectProps<T extends BaseOption, IsMulti extends boolean> = InjectedRuntimeSelectProps<T> & {
+  [key: string]: unknown;
+  components: Record<string, React.ComponentType<any> | undefined>;
+  filterOption: (option: FilterOptionOption<ProcessedOption<T>>, inputValue: string) => boolean;
+  getOptionLabel: (option: ProcessedOption<T>) => string;
+  getOptionValue: (option: ProcessedOption<T>) => string | number;
+  styles: StylesConfig<ProcessedOption<T>, IsMulti, GroupBase<ProcessedOption<T>>>;
+} & React.RefAttributes<SelectInstance<ProcessedOption<T>, IsMulti, GroupBase<ProcessedOption<T>>>>;
+
+const TreeAwareSelect = Select as unknown as <T extends BaseOption, IsMulti extends boolean>(
+  props: TreeAwareSelectProps<T, IsMulti>
+) => React.ReactElement;
 
 /**
  * Gets stable identifier for a focused option.
  *
  * @private
  */
-function getOptionScrollKey(option, valueKey) {
+function getOptionScrollKey<T extends BaseOption>(
+  option: ProcessedOption<T> | null | undefined,
+  valueKey: string
+): OptionKey | string | undefined {
   if (!option) {
     return undefined;
   }
   return option.path?.join(">") || option[valueKey];
 }
 
-class VirtualizedTreeSelect extends Component {
-  constructor(props, context) {
+class VirtualizedTreeSelect<
+  T extends BaseOption = BaseOption,
+  IsMulti extends boolean = boolean,
+  IsClearable extends boolean = true
+> extends Component<VirtualizedTreeSelectProps<T, IsMulti, IsClearable>, VirtualizedTreeSelectState<T>> {
+  declare static defaultProps: Pick<
+    ResolvedVirtualizedTreeSelectProps<BaseOption, boolean, boolean>,
+    VirtualizedDefaultProp
+  >;
+  declare static propTypes: Partial<Record<keyof VirtualizedTreeSelectProps<BaseOption, boolean, boolean>, unknown>>;
+
+  declare readonly props: Readonly<ResolvedVirtualizedTreeSelectProps<T, IsMulti, IsClearable>>;
+
+  declare matchCheck: (searchInput: string, optionLabel: string) => boolean;
+  declare data: Record<string, ProcessedOption<T>>;
+  declare searchString: string;
+  declare focusedOptionScrollState: FocusedOptionScrollState;
+  declare pendingSelectedScroll: boolean;
+  declare toggledOptions: ProcessedOption<T>[];
+  declare select: React.RefObject<SelectInstance<ProcessedOption<T>, IsMulti, GroupBase<ProcessedOption<T>>>>;
+
+  constructor(props: VirtualizedTreeSelectProps<T, IsMulti, IsClearable>, context?: unknown) {
     super(props, context);
 
     this._processOptions = this._processOptions.bind(this);
@@ -72,7 +169,7 @@ class VirtualizedTreeSelect extends Component {
     });
   }
 
-  componentDidUpdate(prevProps) {
+  componentDidUpdate(prevProps: VirtualizedTreeSelectProps<T, IsMulti, IsClearable>): void {
     if (!optionListsAreEqual(this.props.value, prevProps.value, this.props.valueKey)) {
       this._processOptions();
       const loadingSelectedPath = this._expandSelectedValues();
@@ -80,7 +177,7 @@ class VirtualizedTreeSelect extends Component {
         const selectedFocused = this._focusSelectedOption(true);
         this.pendingSelectedScroll = loadingSelectedPath || (this._hasSelectedValue() && !selectedFocused);
       });
-    } else if (this.props.update > prevProps.update) {
+    } else if (this.props.update! > prevProps.update!) {
       // capture the currently focused option
       const prevFocused = this.select.current && this.select.current.state.focusedOption;
       // Prevents scrolling while options are re-processed after a new page is loaded
@@ -113,12 +210,12 @@ class VirtualizedTreeSelect extends Component {
    * @returns {boolean} whether the selected option was focused
    * @private
    */
-  _focusSelectedOption(forceScroll = false) {
+  _focusSelectedOption(forceScroll = false): boolean {
     if (!this._hasSelectedValue()) {
       return false;
     }
 
-    const targetValue = this.props.value[0];
+    const targetValue = this.props.value![0];
     const option = this._findOption(this.state.options, targetValue);
     if (option) {
       // Initial load and value change should always scroll to the selected option
@@ -138,12 +235,12 @@ class VirtualizedTreeSelect extends Component {
    * @returns {boolean} true when there is any selected option
    * @private
    */
-  _hasSelectedValue() {
+  _hasSelectedValue(): boolean {
     return !!(this.props.value && Array.isArray(this.props.value) && this.props.value.length > 0);
   }
 
   focus() {
-    this.select.current.focus();
+    this.select.current!.focus();
   }
 
   blurInput() {
@@ -156,22 +253,22 @@ class VirtualizedTreeSelect extends Component {
     this.setState({options: []});
   }
 
-  _processOptions() {
+  _processOptions(): void {
     this.data = {};
-    const keys = [];
+    const keys: OptionKey[] = [];
     this.props.options.forEach((option) => {
       const optionID = option[this.props.valueKey];
       // Value property is needed for correct rendering of selected options
-      option.value = optionID;
-      this.data[optionID] = option;
+      (option as BaseOption).value = optionID;
+      this.data[optionID] = option as ProcessedOption<T>;
       keys.push(optionID);
     });
 
-    let options;
+    let options: ProcessedOption<T>[];
 
     if (this.props.renderAsTree) {
       // Utilize the fact that set has stable iteration order (~ insertion order)
-      const sortedArr = new Set();
+      const sortedArr = new Set<ProcessedOption<T>>();
       keys.forEach((key) => {
         let option = this.data[key];
         if (!option.parent) {
@@ -191,7 +288,7 @@ class VirtualizedTreeSelect extends Component {
       }
     } else {
       // Flat list processing - just use all options without hierarchy
-      options = this.props.options.slice();
+      options = this.props.options.slice() as ProcessedOption<T>[];
       for (const option of options) {
         option.depth = 0;
         option.parent = null;
@@ -210,14 +307,14 @@ class VirtualizedTreeSelect extends Component {
    * @returns {boolean} whether expanding a selected value's path initiated loading
    * @private
    */
-  _expandSelectedValues() {
+  _expandSelectedValues(): boolean {
     if (!this.props.value || !Array.isArray(this.props.value) || this.props.value.length === 0) {
       return false;
     }
 
     let loadingSelectedPath = false;
     for (let option of this.props.value) {
-      const optionId = option?.[this.props.valueKey] ?? option;
+      const optionId = (option as ProcessedOption<T>)?.[this.props.valueKey] ?? option;
       let parentOption = this.data[optionId]?.parent;
 
       while (parentOption) {
@@ -232,7 +329,7 @@ class VirtualizedTreeSelect extends Component {
         // Trigger loading children of the expanded option ONLY if closed
         if (!existingOption.expanded) {
           loadingSelectedPath = true;
-          this.props.onOptionToggle(existingOption);
+          this.props.onOptionToggle!(existingOption);
           existingOption.expanded = true;
         }
 
@@ -252,23 +349,38 @@ class VirtualizedTreeSelect extends Component {
    * @returns {any|null} the found option or null
    * @private
    */
-  _findOption(dataset, searchedOption) {
+  _findOption(
+    dataset: ProcessedOption<T>[] | null | undefined,
+    searchedOption: ProcessedOption<T> | T | OptionKey | null | undefined
+  ): ProcessedOption<T> | null {
     if (!searchedOption || !dataset) return null;
-    const targetKey = searchedOption[this.props.valueKey] ?? searchedOption;
+    const targetKey = (searchedOption as ProcessedOption<T>)[this.props.valueKey] ?? searchedOption;
     let options = dataset.filter((el) => el[this.props.valueKey] === targetKey);
     if (options.length === 0) return null;
-    if (searchedOption.path) {
-      return options.find((option) => arraysAreEqual(option.path, searchedOption.path)) || options[0];
+    if ((searchedOption as ProcessedOption<T>).path) {
+      return (
+        options.find((option) => arraysAreEqual(option.path, (searchedOption as ProcessedOption<T>).path)) || options[0]
+      );
     }
     return options[0];
   }
 
-  _findOptionWithParent(dataset, searchedOptionKey, parent) {
+  _findOptionWithParent(
+    dataset: ProcessedOption<T>[],
+    searchedOptionKey: OptionKey,
+    parent: ProcessedOption<T>
+  ): ProcessedOption<T> | undefined {
     let options = dataset.filter((el) => el[this.props.valueKey] === searchedOptionKey);
     return options.find((el) => el?.parent === parent);
   }
 
-  _calculateDepth(key, depth, parent, visited, sortedArr) {
+  _calculateDepth(
+    key: OptionKey,
+    depth: number,
+    parent: ProcessedOption<T> | null,
+    visited: Set<OptionKey>,
+    sortedArr: Set<ProcessedOption<T>>
+  ): void {
     let option = this.data[key];
     if (!option || visited.has(key)) {
       return;
@@ -296,13 +408,13 @@ class VirtualizedTreeSelect extends Component {
       option.expanded = existingOption.expanded;
     }
 
-    option[this.props.childrenKey].forEach((childID) => {
+    (option[this.props.childrenKey] as OptionKey[]).forEach((childID: OptionKey) => {
       // Create a new set for each child to avoid modifying the parent's visited set - prevent only loops in one tree branch
       this._calculateDepth(childID, depth + 1, option, new Set(visited), sortedArr);
     });
   }
 
-  filterOption(candidate, inputValue) {
+  filterOption(candidate: FilterOptionOption<ProcessedOption<T>>, inputValue: string): boolean | undefined {
     const option = candidate.data;
     inputValue = inputValue.trim().toLowerCase();
 
@@ -317,10 +429,10 @@ class VirtualizedTreeSelect extends Component {
     }
   }
 
-  filterValues(searchInput) {
+  filterValues(searchInput: string): void {
     // when the fetch is delayed, it can cause incorrect filter render, this prevents it from happening
-    if (this.select.current.inputRef.value !== searchInput) {
-      searchInput = this.select.current.inputRef.value;
+    if (this.select.current!.inputRef!.value !== searchInput) {
+      searchInput = this.select.current!.inputRef!.value;
     }
 
     if (searchInput === "") return;
@@ -341,7 +453,7 @@ class VirtualizedTreeSelect extends Component {
     }
     for (let match of matches) {
       while (match.parent !== null) {
-        match = match.parent;
+        match = match.parent!;
         match.expanded = true;
         match.visible = true;
       }
@@ -349,11 +461,11 @@ class VirtualizedTreeSelect extends Component {
     this.forceUpdate();
   }
 
-  matchCheckFull(searchInput, optionLabel) {
+  matchCheckFull(searchInput: string, optionLabel: string): boolean {
     return optionLabel.toLowerCase().indexOf(searchInput.toLowerCase()) !== -1;
   }
 
-  _onInputChange(input) {
+  _onInputChange(input: string): void {
     // Make the expensive calculation only when input has been really changed
     if (this.searchString === input) {
       return;
@@ -363,7 +475,7 @@ class VirtualizedTreeSelect extends Component {
     }
 
     this.searchString = input;
-    this.props.onInputChange(input);
+    this.props.onInputChange!(input);
     // Collapses items which were expanded by the search
     if (input.length === 0) {
       for (let option of this.state.options) {
@@ -372,7 +484,7 @@ class VirtualizedTreeSelect extends Component {
     }
   }
 
-  _removeChildrenFromToggled(option) {
+  _removeChildrenFromToggled(option?: ProcessedOption<T>): void {
     if (option === undefined) return;
     for (const subTermId of option[this.props.childrenKey]) {
       const subTerm = this._findOptionWithParent(this.state.options, subTermId, option);
@@ -382,7 +494,7 @@ class VirtualizedTreeSelect extends Component {
     }
   }
 
-  _onOptionClose(option) {
+  _onOptionClose(option?: ProcessedOption<T>): void {
     if (option === undefined) return;
     option.expanded = false;
     this._focusOption(option);
@@ -392,12 +504,12 @@ class VirtualizedTreeSelect extends Component {
     }
   }
 
-  _onOptionToggle(option) {
+  _onOptionToggle(option: ProcessedOption<T>): void {
     // disables option expansion/collapse when search string is present
     if (this.searchString !== "") {
       return;
     }
-    this.props.onOptionToggle(option);
+    this.props.onOptionToggle!(option);
 
     if (option.expanded) {
       this._onOptionClose(option);
@@ -419,18 +531,18 @@ class VirtualizedTreeSelect extends Component {
 
   //When selecting an option, we want to ensure that the path to it is expanded
   //Path is saved in toggledOptions
-  _onOptionSelect(props) {
+  _onOptionSelect(props: SelectOptionProps<T>): void {
     props.selectOption(props.data);
   }
 
   //When using custom option, it is needed to set focusedOption manually
-  _focusOption(option) {
+  _focusOption(option: ProcessedOption<T>): void {
     if (this.select.current) {
       this.select.current.setState({focusedOption: option});
     }
   }
 
-  _onKeyDown(event) {
+  _onKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
     if (event.key === " " && !this.searchString) {
       event.preventDefault();
       const focusedOption = this.select.current && this.select.current.state.focusedOption;
@@ -449,10 +561,13 @@ class VirtualizedTreeSelect extends Component {
   render() {
     const props = this.props;
     const styles = this._prepareStyles();
-    const filterOptions = props.filterOption || this.filterOption;
+    const filterOptions = (props.filterOption || this.filterOption) as (
+      option: FilterOptionOption<ProcessedOption<T>>,
+      inputValue: string
+    ) => boolean;
     const optionRenderer = this.props.optionRenderer || Option;
     return (
-      <Select
+      <TreeAwareSelect<T, IsMulti>
         ref={this.select}
         {...props}
         styles={styles}
@@ -481,24 +596,24 @@ class VirtualizedTreeSelect extends Component {
     );
   }
 
-  _prepareStyles() {
+  _prepareStyles(): StylesConfig<ProcessedOption<T>, IsMulti, GroupBase<ProcessedOption<T>>> {
     return {
-      dropdownIndicator: (provided, state) => ({
+      dropdownIndicator: (provided: Record<string, any>, state: any) => ({
         ...provided,
         transform: state.selectProps.menuIsOpen && "rotate(180deg)",
         display: !state.selectProps.isMenuOpen ? "flex" : "none",
       }),
-      indicatorSeparator: (provided, state) => ({
+      indicatorSeparator: (provided: Record<string, any>, state: any) => ({
         ...provided,
         display: !state.selectProps.isMenuOpen ? "flex" : "none",
       }),
-      multiValue: (base) => ({
+      multiValue: (base: Record<string, any>) => ({
         ...base,
         backgroundColor: "rgba(0, 126, 255, 0.08)",
         border: "1px solid #c2e0ff",
         paddingLeft: Constants.VALUE_MARGIN_X,
       }),
-      multiValueRemove: (base) => ({
+      multiValueRemove: (base: Record<string, any>) => ({
         ...base,
         color: "#007eff",
         cursor: "pointer",
@@ -509,38 +624,43 @@ class VirtualizedTreeSelect extends Component {
         },
         marginLeft: Constants.VALUE_MARGIN_X,
       }),
-      noOptionsMessage: (provided) => ({
+      noOptionsMessage: (provided: Record<string, any>) => ({
         ...provided,
         paddingLeft: "16px",
       }),
-      menu: (provided, state) => ({
+      menu: (provided: Record<string, any>, state: any) => ({
         ...provided,
         position: state.selectProps.menuIsFloating ? "absolute" : "relative",
       }),
-      valueContainer: (provided, state) => ({
+      valueContainer: (provided: Record<string, any>, state: any) => ({
         ...provided,
         display: state.hasValue ? "flex" : "inline-grid",
       }),
-      input: (provided) => ({
+      input: (provided: Record<string, any>) => ({
         ...provided,
         input: {
           opacity: "1 !important",
         },
       }),
       ...this.props.styles,
-    };
+    } as StylesConfig<ProcessedOption<T>, IsMulti, GroupBase<ProcessedOption<T>>>;
   }
 }
 
 // Wrapper for MenuList, it doesn't do anything, it is only needed for correct passing of the onScroll prop
-const Menu = (props) => {
+type InternalMenuProps = MenuProps<ProcessedOption<BaseOption>, boolean, GroupBase<ProcessedOption<BaseOption>>> & {
+  selectProps: MenuProps<ProcessedOption<BaseOption>, boolean, GroupBase<ProcessedOption<BaseOption>>>["selectProps"] &
+    InjectedRuntimeSelectProps<BaseOption>;
+};
+
+const Menu = (props: InternalMenuProps) => {
   return (
     <components.Menu
       {...props}
       innerProps={{
         ...props.innerProps,
-        onScrollCapture: (e) => {
-          props.selectProps.listProps.onScroll(e.target);
+        onScrollCapture: (e: React.UIEvent<HTMLElement>) => {
+          props.selectProps.listProps!.onScroll!(e.target as HTMLElement);
         },
       }}
     >
@@ -550,21 +670,39 @@ const Menu = (props) => {
 };
 
 // Component for efficient rendering
-const MenuList = (props) => {
+type InternalMenuListProps = MenuListProps<
+  ProcessedOption<BaseOption>,
+  boolean,
+  GroupBase<ProcessedOption<BaseOption>>
+> & {
+  selectProps: MenuListProps<
+    ProcessedOption<BaseOption>,
+    boolean,
+    GroupBase<ProcessedOption<BaseOption>>
+  >["selectProps"] &
+    InjectedRuntimeSelectProps<BaseOption>;
+};
+
+const MenuList = (props: InternalMenuListProps) => {
   const {children} = props;
   const {optionHeight, maxHeight, valueKey, focusedOptionScrollState} = props.selectProps;
 
   /// React-Window List reference
-  const listRef = React.useRef(null);
+  const listRef = React.useRef<FixedSizeListInstance>(null);
 
   // We need to check whether the passed object contains items or loading/empty message
-  let values;
-  let height;
+  let values: React.ReactElement[];
+  let height: number;
   if (Array.isArray(children)) {
-    values = children;
-    height = Math.min(maxHeight, optionHeight * values.length);
+    values = children as React.ReactElement[];
+    height = Math.min(maxHeight, (optionHeight as number) * values.length);
   } else {
-    values = [<components.NoOptionsMessage {...children.props} children={children.props.children} />];
+    values = [
+      <components.NoOptionsMessage
+        {...(children as React.ReactElement).props}
+        children={(children as React.ReactElement).props.children}
+      />,
+    ];
     height = 40;
   }
 
@@ -575,7 +713,7 @@ const MenuList = (props) => {
     }
 
     /// The children element to which we should scroll
-    let target = children.find((child) => child.props?.isFocused);
+    let target = (children as React.ReactElement[]).find((child) => child.props?.isFocused);
     if (!target || !target.props?.data) {
       return;
     }
@@ -598,17 +736,27 @@ const MenuList = (props) => {
 
     try {
       listRef.current.scrollToItem(targetIndex, "center");
-      focusedOptionScrollState.lastScrolledKey = targetKey;
+      focusedOptionScrollState.lastScrolledKey = targetKey!;
       focusedOptionScrollState.lastScrolledIndex = targetIndex;
     } catch (e) {
       // if scroll fails it doesn't matter much
     }
   });
 
-  return (
-    <List ref={listRef} height={height} itemCount={values.length} itemSize={optionHeight} overscanCount={30}>
-      {({index, style}) => <div style={style}>{values[index]}</div>}
-    </List>
+  return React.createElement(
+    List as unknown as React.ForwardRefExoticComponent<
+      Omit<FixedSizeListProps, "width" | "children"> & React.RefAttributes<FixedSizeListInstance>
+    >,
+    {
+      ref: listRef,
+      height: height,
+      itemCount: values.length,
+      itemSize: optionHeight as number,
+      overscanCount: 30,
+    },
+    (({index, style}: ListChildComponentProps) => (
+      <div style={style}>{values[index]}</div>
+    )) as unknown as React.ReactNode
   );
 };
 

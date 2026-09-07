@@ -11,3 +11,11 @@ lib/index.html
 .eslintignore
 .eslintrc
 .gradle
+coverage
+tests
+package-tests
+TYPESCRIPT_MIGRATION_PLAN.md
+jest.config.js
+tsconfig.json
+tsconfig.build.json
+tsconfig.package.json

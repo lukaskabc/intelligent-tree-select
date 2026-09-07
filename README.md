@@ -23,7 +23,29 @@ import { IntelligentTreeSelect } from "intelligent-tree-select"
 import "intelligent-tree-select/styles.css"
 ```
 
-Usage example can be found in `examples/demo.js`
+The package includes TypeScript declarations generated from the library source. Option data is generic, so custom keys
+and callback values are inferred when an option interface is supplied:
+
+```tsx
+interface CategoryOption {
+  id: number
+  name: string
+  children: number[]
+}
+
+const ref = React.createRef<IntelligentTreeSelect<CategoryOption>>()
+
+<IntelligentTreeSelect<CategoryOption>
+  ref={ref}
+  options={categories}
+  valueKey="id"
+  labelKey="name"
+  value={[1]}
+  onChange={(selected) => console.log(selected)}
+/>
+```
+
+Usage example can be found in `examples/demo.tsx`
 
 ### Intelligent Tree Select Props
 

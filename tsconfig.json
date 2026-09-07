@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["DOM", "DOM.Iterable", "ES2021"],
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "jsx": "react",
+    "strict": true,
+    "noEmit": true,
+    "allowJs": false,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "useDefineForClassFields": false,
+    "skipLibCheck": true,
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": false,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "examples/**/*.ts", "examples/**/*.tsx", "tests/**/*.ts", "tests/**/*.tsx"]
+}

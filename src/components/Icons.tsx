@@ -1,6 +1,6 @@
 import React from "react";
 
-export const TogglePlusIcon = () => {
+export const TogglePlusIcon: React.FC<React.SVGProps<SVGSVGElement>> = () => {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24">
       <g className="nc-icon-wrapper" fill="#444444">
@@ -10,7 +10,7 @@ export const TogglePlusIcon = () => {
   );
 };
 
-export const ToggleMinusIcon = () => {
+export const ToggleMinusIcon: React.FC<React.SVGProps<SVGSVGElement>> = () => {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24">
       <g className="nc-icon-wrapper" fill="#444444">
